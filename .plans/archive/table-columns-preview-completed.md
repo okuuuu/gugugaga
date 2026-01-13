@@ -14,12 +14,12 @@
 - `pyproject.toml` — add any required dependency for rendering PDF previews (e.g., Pillow), if needed.
 
 ## Implementation Steps
-1. [ ] Inspect current PDF table parsing to determine where TITLE/DESCRIPTION/MASS/Qty can be extracted from the same table row as part numbers.
-2. [ ] Update extraction output structures to return a richer row model (part number + title/description/mass/qty) while preserving existing behavior for PDFs that only include part numbers.
-3. [ ] Thread the new row model through lookup/matching so results map the extra fields per part number.
-4. [ ] Update the Treeview to include separate columns for TITLE, DESCRIPTION, MASS, and Qty and populate them per row.
-5. [ ] Add a hover handler on Treeview rows that, when a PDF exists, renders a preview image and shows it in a top-right overlay/widget; hide/clear on hover exit or row change.
-6. [ ] Ensure preview rendering is performant (cache per-PDF image, limit to first page) and degrades gracefully when PDFs are missing or preview generation fails.
+1. [x] Inspect current PDF table parsing to determine where TITLE/DESCRIPTION/MASS/Qty can be extracted from the same table row as part numbers.
+2. [x] Update extraction output structures to return a richer row model (part number + title/description/mass/qty) while preserving existing behavior for PDFs that only include part numbers.
+3. [x] Thread the new row model through lookup/matching so results map the extra fields per part number.
+4. [x] Update the Treeview to include separate columns for TITLE, DESCRIPTION, MASS, and Qty and populate them per row.
+5. [x] Add a hover handler on Treeview rows that, when a PDF exists, renders a preview image and shows it in a top-right overlay/widget; hide/clear on hover exit or row change.
+6. [x] Ensure preview rendering is performant (cache per-PDF image, limit to first page) and degrades gracefully when PDFs are missing or preview generation fails.
 ✅ Verify by running: python -m pytest
 
 ## Technical Constraints
