@@ -1,41 +1,39 @@
-# Plan: Part number match enhancements & UI actions
+# Plan: Table Columns and PDF Hover Preview
 
 ## Context
 - No git remote is configured, so fetching `master` is not possible in this repo state.
-- The UI is a Tkinter app with a drag-and-drop PDF selection label and a Treeview for results.
-- Matching logic currently returns any file types and does not handle revision selection or special part-number suffixes.
-- The requested updates add click behaviors (drop-zone browse, print buttons, model links) and stricter matching rules.
+- The UI is a Tkinter desktop app with a results Treeview listing extracted part numbers.
+- The request is to split out distinct columns for TITLE, DESCRIPTION, MASS, and Qty.
+- When a row has an associated PDF, hovering that row should show a PDF preview near the top-right of the UI.
+- PDF parsing currently focuses on part numbers; additional table fields are not extracted today.
 
 ## Files to Create/Modify
-- `src/kv_pet/app.py` — update UI behavior (clickable drop zone, model column, print actions, Treeview interactions).
-- `src/kv_pet/file_lookup.py` — refine matching logic for PDF-only results, revision handling, and part-number suffix rules.
-- `src/kv_pet/pdf_extract.py` — adjust if needed to preserve/flag part number suffixes such as `*`.
+- `src/kv_pet/pdf_extract.py` — extend table extraction to capture TITLE, DESCRIPTION, MASS, Qty alongside part numbers.
+- `src/kv_pet/file_lookup.py` — adjust data structures to carry the additional fields through lookup results.
+- `src/kv_pet/app.py` — update Treeview columns, row hover handling, and PDF preview widget.
+- `pyproject.toml` — add any required dependency for rendering PDF previews (e.g., Pillow), if needed.
 
 ## Implementation Steps
-1. [ ] Review current extraction and matching data flow to confirm where part numbers and matches are assembled for display.
-2. [ ] Update matching logic to:
-   - filter matches to `.pdf` by default,
-   - collapse `_rev` files to the latest numeric revision when multiple exist,
-   - mark part numbers ending in `*` as “no PDF required” in the matching output.
-3. [ ] Extend UI columns to add a rightmost “Model” column and render a clickable square indicator for `.ipt`/`.iam` matches.
-4. [ ] Make the drag-and-drop label clickable to open the PDF browse dialog (regardless of DnD availability).
-5. [ ] Add a “Print” action adjacent to each matched PDF (e.g., in the matching files column text or via a dedicated action column) and wire it to system print for PDFs.
-6. [ ] Ensure Treeview click handlers distinguish between open-file, print, and model-link actions without breaking double-click open.
+1. [ ] Inspect current PDF table parsing to determine where TITLE/DESCRIPTION/MASS/Qty can be extracted from the same table row as part numbers.
+2. [ ] Update extraction output structures to return a richer row model (part number + title/description/mass/qty) while preserving existing behavior for PDFs that only include part numbers.
+3. [ ] Thread the new row model through lookup/matching so results map the extra fields per part number.
+4. [ ] Update the Treeview to include separate columns for TITLE, DESCRIPTION, MASS, and Qty and populate them per row.
+5. [ ] Add a hover handler on Treeview rows that, when a PDF exists, renders a preview image and shows it in a top-right overlay/widget; hide/clear on hover exit or row change.
+6. [ ] Ensure preview rendering is performant (cache per-PDF image, limit to first page) and degrades gracefully when PDFs are missing or preview generation fails.
 ✅ Verify by running: python -m pytest
 
 ## Technical Constraints
-- Avoid adding new UI dependencies; use Tkinter only.
-- Keep PDF matching case-insensitive and consistent with existing normalization.
-- Preserve existing drag-and-drop behavior when tkinterdnd2 is available.
+- Keep the UI in Tkinter; avoid introducing new UI frameworks.
+- Preview should not block the UI thread; use caching or background rendering if needed.
+- Maintain compatibility with PDF files lacking the extra columns by leaving those fields blank.
 
 ## Dependencies
-- No new dependencies.
+- Add `pillow` if required for PDF-to-image rendering via pdfplumber.
 
 ## Notes / Edge Cases
-- If no prior plan existed, the archive entry is empty; document this in commit history as needed.
-- Handle `_rev` matching when filenames include additional suffixes beyond the revision number.
-- If a part number ends with `*`, do not require a PDF and display a clear message instead of a file list.
-- When both `.ipt` and `.iam` exist, decide whether to show one or multiple model indicators.
+- Some PDFs may not include TITLE/DESCRIPTION/MASS/Qty columns or may use alternate headers; handle missing fields gracefully.
+- Hover preview should not obscure critical controls; place it in a predictable top-right container.
+- Large PDFs may be slow to render; consider downscaling or thumbnailing.
 
 ## Claude Code Handoff
 - Save this plan to `.plans/current.md`.
