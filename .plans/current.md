@@ -1,39 +1,36 @@
-# Plan: Table Columns and PDF Hover Preview
+# Plan: Adjustable PDF Preview & Print for Uploaded PDFs
 
 ## Context
-- No git remote is configured, so fetching `master` is not possible in this repo state.
-- The UI is a Tkinter desktop app with a results Treeview listing extracted part numbers.
-- The request is to split out distinct columns for TITLE, DESCRIPTION, MASS, and Qty.
-- When a row has an associated PDF, hovering that row should show a PDF preview near the top-right of the UI.
-- PDF parsing currently focuses on part numbers; additional table fields are not extracted today.
+- No git remote is configured in this repo, so fetching `master` is not possible before planning updates.
+- The current Tkinter UI lets users add PDF files but provides no preview or print actions for the uploaded PDFs themselves.
+- The results tree already supports opening and printing matched PDFs via row interactions, which can be reused for uploaded files.
+- The request is to add a resizable preview for the uploaded PDF and expose both preview and print actions for that PDF.
 
 ## Files to Create/Modify
-- `src/kv_pet/pdf_extract.py` — extend table extraction to capture TITLE, DESCRIPTION, MASS, Qty alongside part numbers.
-- `src/kv_pet/file_lookup.py` — adjust data structures to carry the additional fields through lookup results.
-- `src/kv_pet/app.py` — update Treeview columns, row hover handling, and PDF preview widget.
-- `pyproject.toml` — add any required dependency for rendering PDF previews (e.g., Pillow), if needed.
+- `src/kv_pet/app.py` — add uploaded-PDF selection, preview panel, size control, and print/preview actions.
+- `pyproject.toml` — add `pillow` if needed for rendering PDF pages to images in Tkinter.
 
 ## Implementation Steps
-1. [ ] Inspect current PDF table parsing to determine where TITLE/DESCRIPTION/MASS/Qty can be extracted from the same table row as part numbers.
-2. [ ] Update extraction output structures to return a richer row model (part number + title/description/mass/qty) while preserving existing behavior for PDFs that only include part numbers.
-3. [ ] Thread the new row model through lookup/matching so results map the extra fields per part number.
-4. [ ] Update the Treeview to include separate columns for TITLE, DESCRIPTION, MASS, and Qty and populate them per row.
-5. [ ] Add a hover handler on Treeview rows that, when a PDF exists, renders a preview image and shows it in a top-right overlay/widget; hide/clear on hover exit or row change.
-6. [ ] Ensure preview rendering is performant (cache per-PDF image, limit to first page) and degrades gracefully when PDFs are missing or preview generation fails.
+1. [ ] Review the current PDF selection UI and decide where to add controls for preview/print of uploaded PDFs (e.g., listbox + action buttons + preview panel).
+2. [ ] Add UI state to track the currently selected uploaded PDF and the requested preview size (slider or input), with sensible defaults.
+3. [ ] Implement preview rendering for the selected uploaded PDF’s first page, resizing according to the chosen preview size, and display it in a dedicated panel.
+4. [ ] Add “Preview” and “Print” actions tied to the selected uploaded PDF, reusing existing open/print helpers where possible.
+5. [ ] Ensure preview updates are non-blocking and cached per PDF/size to keep the UI responsive.
+6. [ ] Handle empty selection, missing files, or render failures gracefully (clear preview, show status text).
 ✅ Verify by running: python -m pytest
 
 ## Technical Constraints
-- Keep the UI in Tkinter; avoid introducing new UI frameworks.
-- Preview should not block the UI thread; use caching or background rendering if needed.
-- Maintain compatibility with PDF files lacking the extra columns by leaving those fields blank.
+- Keep the UI in Tkinter without introducing new UI frameworks.
+- Avoid blocking the main thread during PDF rendering; use caching or background work.
+- Preview size controls must be bounded to prevent excessive memory usage.
 
 ## Dependencies
-- Add `pillow` if required for PDF-to-image rendering via pdfplumber.
+- Add `pillow` if required for PDF-to-image rendering and Tkinter image display.
 
 ## Notes / Edge Cases
-- Some PDFs may not include TITLE/DESCRIPTION/MASS/Qty columns or may use alternate headers; handle missing fields gracefully.
-- Hover preview should not obscure critical controls; place it in a predictable top-right container.
-- Large PDFs may be slow to render; consider downscaling or thumbnailing.
+- Multiple uploaded PDFs should be selectable, with preview/print actions scoped to the current selection.
+- Some PDFs may fail to render; the UI should surface an error state without crashing.
+- Preview size changes should immediately refresh the displayed preview.
 
 ## Claude Code Handoff
 - Save this plan to `.plans/current.md`.
