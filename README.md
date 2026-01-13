@@ -1,0 +1,83 @@
+# PDF Part Number Extractor (kv_pet)
+
+A desktop application that extracts part numbers from PDF drawings and finds matching files in a selected folder.
+
+## Features
+
+- **PDF Table Extraction**: Automatically locates tables in PDFs and extracts values from the `PART NUMBER` column
+- **Smart Table Detection**: Prioritizes the bottom-right table when multiple tables exist (common for engineering drawings)
+- **File Matching**: Scans a folder and matches part numbers to filenames using normalized matching (case-insensitive, ignores spaces/dashes)
+- **Drag & Drop**: Drop PDF files directly onto the application (requires tkinterdnd2)
+- **Batch Processing**: Process multiple PDFs at once without blocking the UI
+- **Quick Access**: Double-click results to open matched files in their default application
+
+## Installation
+
+1. Create and activate a virtual environment:
+
+```bash
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS/Linux
+source .venv/bin/activate
+```
+
+2. Install the package:
+
+```bash
+pip install -e .
+```
+
+## Usage
+
+Run the application:
+
+```bash
+kv-pet
+```
+
+Or run as a module:
+
+```bash
+python -m kv_pet.app
+```
+
+### Steps
+
+1. **Add PDF files**: Either drag and drop PDF files onto the drop zone, or click "Browse PDFs" to select files
+2. **Select search folder**: Click "Select Folder" to choose the directory to search for matching files
+3. **Extract**: Click "Extract Part Numbers & Find Files" to process the PDFs
+4. **View results**: Results appear in the tree view showing each PDF, its extracted part numbers, and matching files
+5. **Open files**: Double-click on a result row to open the matched file
+
+## How Matching Works
+
+The application uses normalized matching to find files:
+
+- Converts both part numbers and filenames to lowercase
+- Removes spaces, dashes, and underscores before comparing
+- Searches recursively through the selected folder
+- Matches if the filename contains the part number
+
+For example, part number `ABC-123` would match files like:
+- `abc123.pdf`
+- `ABC-123_rev2.dwg`
+- `drawing_abc123_final.pdf`
+
+## Dependencies
+
+- **pdfplumber**: For extracting tables from PDF files
+- **tkinterdnd2**: For drag-and-drop support (optional but recommended)
+
+## Limitations
+
+- The `PART NUMBER` column header must be present in the table (case-insensitive)
+- Only the first table found with a PART NUMBER column is processed
+- PDF files must have extractable text (scanned images require OCR preprocessing)
+
+## License
+
+Apache License 2.0

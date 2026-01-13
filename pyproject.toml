@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kv_pet"
+version = "0.1.0"
+description = "PDF Part Number Extractor with File Path Lookup"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+dependencies = [
+    "pdfplumber>=0.10.0",
+    "tkinterdnd2>=0.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+kv-pet = "kv_pet.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
