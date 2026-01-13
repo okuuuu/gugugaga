@@ -6,7 +6,7 @@ import sys
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Optional
+from typing import Dict, List, Optional
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -16,7 +16,7 @@ except ImportError:
 
 import tkinter as tk
 
-from kv_pet.file_lookup import lookup_part_numbers
+from kv_pet.file_lookup import MatchResult, lookup_part_numbers
 from kv_pet.pdf_extract import extract_part_numbers
 
 
@@ -33,12 +33,15 @@ class PDFPartNumberExtractor:
             self.dnd_available = False
 
         self.root.title("PDF Part Number Extractor")
-        self.root.geometry("900x600")
-        self.root.minsize(700, 500)
+        self.root.geometry("1000x600")
+        self.root.minsize(800, 500)
 
-        self.pdf_paths: list[Path] = []
+        self.pdf_paths: List[Path] = []
         self.search_folder: Optional[Path] = None
-        self.results: dict[str, dict[str, list[Path]]] = {}
+        self.results: Dict[str, Dict[str, MatchResult]] = {}
+
+        # Store item data for click handling
+        self._item_data: Dict[str, dict] = {}
 
         self._setup_ui()
 
@@ -52,17 +55,21 @@ class PDFPartNumberExtractor:
         pdf_frame = ttk.LabelFrame(main_frame, text="PDF Files", padding="5")
         pdf_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Drop zone
+        # Drop zone - now clickable
         self.drop_zone = ttk.Label(
             pdf_frame,
-            text="Drag & drop PDF files here\nor click 'Browse' to select"
+            text="Drag & drop PDF files here, or click to browse"
             if self.dnd_available
-            else "Click 'Browse' to select PDF files",
+            else "Click here to select PDF files",
             anchor="center",
             relief="sunken",
             padding=20,
+            cursor="hand2",
         )
         self.drop_zone.pack(fill=tk.X, pady=5)
+
+        # Bind click to browse
+        self.drop_zone.bind("<Button-1>", lambda e: self._browse_pdfs())
 
         if self.dnd_available:
             self.drop_zone.drop_target_register(DND_FILES)
@@ -112,18 +119,22 @@ class PDFPartNumberExtractor:
         results_frame = ttk.LabelFrame(main_frame, text="Results", padding="5")
         results_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Treeview for results
-        columns = ("Part Number", "Matching Files", "Status")
+        # Treeview for results - added Model column
+        columns = ("Part Number", "Matching PDF", "Print", "Status", "Model")
         self.tree = ttk.Treeview(results_frame, columns=columns, show="tree headings")
         self.tree.heading("#0", text="PDF File")
         self.tree.heading("Part Number", text="Part Number")
-        self.tree.heading("Matching Files", text="Matching Files")
+        self.tree.heading("Matching PDF", text="Matching PDF")
+        self.tree.heading("Print", text="Print")
         self.tree.heading("Status", text="Status")
+        self.tree.heading("Model", text="Model")
 
-        self.tree.column("#0", width=200)
-        self.tree.column("Part Number", width=150)
-        self.tree.column("Matching Files", width=400)
+        self.tree.column("#0", width=180)
+        self.tree.column("Part Number", width=120)
+        self.tree.column("Matching PDF", width=350)
+        self.tree.column("Print", width=50, anchor="center")
         self.tree.column("Status", width=100)
+        self.tree.column("Model", width=60, anchor="center")
 
         # Scrollbars
         vsb = ttk.Scrollbar(results_frame, orient="vertical", command=self.tree.yview)
@@ -139,6 +150,8 @@ class PDFPartNumberExtractor:
         results_frame.grid_rowconfigure(0, weight=1)
         results_frame.grid_columnconfigure(0, weight=1)
 
+        # Single click handler for actions
+        self.tree.bind("<Button-1>", self._on_tree_click)
         # Double-click to open file
         self.tree.bind("<Double-1>", self._on_tree_double_click)
 
@@ -234,11 +247,11 @@ class PDFPartNumberExtractor:
                     if part_numbers and self.search_folder:
                         matches = lookup_part_numbers(part_numbers, self.search_folder)
                     else:
-                        matches = {pn: [] for pn in part_numbers}
+                        matches = {pn: MatchResult(status="No folder") for pn in part_numbers}
 
                     self.results[str(pdf_path)] = matches
                 except Exception as e:
-                    self.results[str(pdf_path)] = {"ERROR": []}
+                    self.results[str(pdf_path)] = {"ERROR": MatchResult(status="Error")}
 
             # Update UI on main thread
             self.root.after(0, self._display_results)
@@ -258,9 +271,10 @@ class PDFPartNumberExtractor:
 
     def _display_results(self):
         """Display extraction results in the treeview."""
-        # Clear existing items
+        # Clear existing items and data
         for item in self.tree.get_children():
             self.tree.delete(item)
+        self._item_data.clear()
 
         for pdf_path, matches in self.results.items():
             pdf_name = Path(pdf_path).name
@@ -270,49 +284,97 @@ class PDFPartNumberExtractor:
                 self.tree.insert(
                     pdf_node,
                     "end",
-                    values=("", "", "No tables found"),
+                    values=("", "", "", "No tables found", ""),
                 )
                 continue
 
-            for part_number, file_paths in matches.items():
+            for part_number, match_result in matches.items():
                 if part_number == "ERROR":
                     self.tree.insert(
                         pdf_node,
                         "end",
-                        values=("", "", "Error processing PDF"),
+                        values=("", "", "", "Error processing PDF", ""),
                     )
                     continue
 
-                if file_paths:
-                    files_str = "; ".join(str(p) for p in file_paths[:3])
-                    if len(file_paths) > 3:
-                        files_str += f" (+{len(file_paths) - 3} more)"
-                    status = f"{len(file_paths)} match(es)"
+                # Handle MatchResult object
+                if isinstance(match_result, MatchResult):
+                    pdf_files = match_result.pdf_files
+                    model_files = match_result.model_files
+                    status = match_result.status
+                    no_pdf_required = match_result.no_pdf_required
                 else:
-                    files_str = ""
-                    status = "No matches"
+                    # Fallback for legacy format
+                    pdf_files = match_result if isinstance(match_result, list) else []
+                    model_files = []
+                    status = f"{len(pdf_files)} match(es)" if pdf_files else "No matches"
+                    no_pdf_required = False
+
+                # Build display strings
+                if no_pdf_required:
+                    pdf_display = ""
+                    print_display = ""
+                elif pdf_files:
+                    pdf_display = pdf_files[0].name
+                    if len(pdf_files) > 1:
+                        pdf_display += f" (+{len(pdf_files) - 1})"
+                    print_display = "[Print]"
+                else:
+                    pdf_display = ""
+                    print_display = ""
+
+                # Model indicator
+                if model_files:
+                    model_display = "[3D]"
+                else:
+                    model_display = ""
 
                 item_id = self.tree.insert(
                     pdf_node,
                     "end",
-                    values=(part_number, files_str, status),
+                    values=(part_number, pdf_display, print_display, status, model_display),
                 )
 
-                # Store file paths for double-click
-                if file_paths:
-                    self.tree.set(item_id, "Matching Files", str(file_paths[0]))
+                # Store data for click handling
+                self._item_data[item_id] = {
+                    "pdf_files": pdf_files,
+                    "model_files": model_files,
+                    "part_number": part_number,
+                }
 
-    def _on_tree_double_click(self, event):
-        """Handle double-click on tree item to open file."""
-        item = self.tree.selection()
-        if not item:
+    def _on_tree_click(self, event):
+        """Handle single click on tree item for Print/Model actions."""
+        # Identify clicked region
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
             return
 
-        values = self.tree.item(item[0], "values")
-        if values and len(values) >= 2:
-            file_path = values[1]
-            if file_path and Path(file_path).exists():
-                self._open_file(Path(file_path))
+        column = self.tree.identify_column(event.x)
+        item = self.tree.identify_row(event.y)
+
+        if not item or item not in self._item_data:
+            return
+
+        data = self._item_data[item]
+
+        # Column #3 is "Print" (columns are #0, #1, #2, #3, #4, #5)
+        # #0 is tree column, then Part Number=#1, Matching PDF=#2, Print=#3, Status=#4, Model=#5
+        if column == "#3":  # Print column
+            if data["pdf_files"]:
+                self._print_file(data["pdf_files"][0])
+        elif column == "#5":  # Model column
+            if data["model_files"]:
+                self._open_file(data["model_files"][0])
+
+    def _on_tree_double_click(self, event):
+        """Handle double-click on tree item to open PDF file."""
+        item = self.tree.identify_row(event.y)
+        if not item or item not in self._item_data:
+            return
+
+        data = self._item_data[item]
+        if data["pdf_files"]:
+            self._open_file(data["pdf_files"][0])
 
     def _open_file(self, path: Path):
         """Open file in system default application."""
@@ -323,8 +385,23 @@ class PDFPartNumberExtractor:
                 subprocess.run(["open", str(path)])
             else:
                 subprocess.run(["xdg-open", str(path)])
+            self.status_var.set(f"Opened: {path.name}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not open file: {e}")
+
+    def _print_file(self, path: Path):
+        """Print a PDF file using system print."""
+        try:
+            if sys.platform == "win32":
+                # Use ShellExecute with "print" verb
+                os.startfile(path, "print")
+            elif sys.platform == "darwin":
+                subprocess.run(["lpr", str(path)])
+            else:
+                subprocess.run(["lpr", str(path)])
+            self.status_var.set(f"Sent to printer: {path.name}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not print file: {e}")
 
     def run(self):
         """Start the application main loop."""
