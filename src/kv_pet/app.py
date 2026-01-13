@@ -30,7 +30,7 @@ from kv_pet.pdf_extract import extract_part_rows, PartRow
 class PDFPreviewCache:
     """Cache for PDF preview images."""
 
-    def __init__(self, max_size: int = 20):
+    def __init__(self, max_size: int = 50):
         self._cache: Dict[str, ImageTk.PhotoImage] = {}
         self._max_size = max_size
 
@@ -46,20 +46,19 @@ class PDFPreviewCache:
         try:
             with pdfplumber.open(pdf_path) as pdf:
                 if pdf.pages:
-                    # Render first page
                     page = pdf.pages[0]
-                    img = page.to_image(resolution=72)
+                    # Use higher resolution for larger previews
+                    resolution = max(72, min(150, size[0] // 2))
+                    img = page.to_image(resolution=resolution)
                     pil_img = img.original
 
                     # Resize to fit
                     pil_img.thumbnail(size, Image.Resampling.LANCZOS)
 
-                    # Convert to PhotoImage
                     photo = ImageTk.PhotoImage(pil_img)
 
                     # Cache management
                     if len(self._cache) >= self._max_size:
-                        # Remove oldest entry
                         oldest = next(iter(self._cache))
                         del self._cache[oldest]
 
@@ -79,7 +78,6 @@ class PDFPartNumberExtractor:
     """Main application window for PDF Part Number Extractor."""
 
     def __init__(self):
-        # Use TkinterDnD if available, otherwise fall back to regular Tk
         if TkinterDnD is not None:
             self.root = TkinterDnD.Tk()
             self.dnd_available = True
@@ -88,25 +86,26 @@ class PDFPartNumberExtractor:
             self.dnd_available = False
 
         self.root.title("PDF Part Number Extractor")
-        self.root.geometry("1200x700")
-        self.root.minsize(1000, 600)
+        self.root.geometry("1300x750")
+        self.root.minsize(1100, 650)
 
         self.pdf_paths: List[Path] = []
         self.search_folder: Optional[Path] = None
-        self.results: Dict[str, Dict[str, tuple]] = {}  # {pdf_path: {pn: (PartRow, MatchResult)}}
+        self.results: Dict[str, Dict[str, tuple]] = {}
 
         # Store item data for click handling
         self._item_data: Dict[str, dict] = {}
 
-        # PDF preview cache
+        # PDF preview cache and state
         self._preview_cache = PDFPreviewCache()
         self._current_preview_item: Optional[str] = None
+        self._selected_uploaded_pdf: Optional[Path] = None
+        self._preview_size = tk.IntVar(value=250)
 
         self._setup_ui()
 
     def _setup_ui(self):
         """Set up the user interface."""
-        # Main container with two panes
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -114,64 +113,14 @@ class PDFPartNumberExtractor:
         left_frame = ttk.Frame(main_frame)
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Right side: PDF preview
-        self.preview_frame = ttk.LabelFrame(main_frame, text="PDF Preview", padding="5")
-        self.preview_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
-        self.preview_frame.pack_propagate(False)
-        self.preview_frame.configure(width=220, height=320)
+        # Right side: PDF preview panel
+        self._setup_preview_panel(main_frame)
 
-        self.preview_label = ttk.Label(self.preview_frame, text="Hover over a row\nto see PDF preview", anchor="center")
-        self.preview_label.pack(fill=tk.BOTH, expand=True)
-
-        # Top section: PDF selection
-        pdf_frame = ttk.LabelFrame(left_frame, text="PDF Files", padding="5")
-        pdf_frame.pack(fill=tk.X, pady=(0, 10))
-
-        # Drop zone - clickable
-        self.drop_zone = ttk.Label(
-            pdf_frame,
-            text="Drag & drop PDF files here, or click to browse"
-            if self.dnd_available
-            else "Click here to select PDF files",
-            anchor="center",
-            relief="sunken",
-            padding=20,
-            cursor="hand2",
-        )
-        self.drop_zone.pack(fill=tk.X, pady=5)
-        self.drop_zone.bind("<Button-1>", lambda e: self._browse_pdfs())
-
-        if self.dnd_available:
-            self.drop_zone.drop_target_register(DND_FILES)
-            self.drop_zone.dnd_bind("<<Drop>>", self._on_drop)
-
-        # PDF buttons
-        pdf_btn_frame = ttk.Frame(pdf_frame)
-        pdf_btn_frame.pack(fill=tk.X)
-
-        ttk.Button(pdf_btn_frame, text="Browse PDFs", command=self._browse_pdfs).pack(
-            side=tk.LEFT, padx=5
-        )
-        ttk.Button(pdf_btn_frame, text="Clear PDFs", command=self._clear_pdfs).pack(
-            side=tk.LEFT, padx=5
-        )
-
-        self.pdf_count_label = ttk.Label(pdf_btn_frame, text="No PDFs selected")
-        self.pdf_count_label.pack(side=tk.LEFT, padx=20)
+        # PDF Files section with listbox
+        self._setup_pdf_section(left_frame)
 
         # Folder selection
-        folder_frame = ttk.LabelFrame(left_frame, text="Search Folder", padding="5")
-        folder_frame.pack(fill=tk.X, pady=(0, 10))
-
-        folder_btn_frame = ttk.Frame(folder_frame)
-        folder_btn_frame.pack(fill=tk.X)
-
-        ttk.Button(
-            folder_btn_frame, text="Select Folder", command=self._browse_folder
-        ).pack(side=tk.LEFT, padx=5)
-
-        self.folder_label = ttk.Label(folder_btn_frame, text="No folder selected")
-        self.folder_label.pack(side=tk.LEFT, padx=20, fill=tk.X, expand=True)
+        self._setup_folder_section(left_frame)
 
         # Extract button
         self.extract_btn = ttk.Button(
@@ -186,10 +135,131 @@ class PDFPartNumberExtractor:
         self.progress.pack(fill=tk.X, pady=(0, 10))
 
         # Results section
-        results_frame = ttk.LabelFrame(left_frame, text="Results", padding="5")
+        self._setup_results_section(left_frame)
+
+        # Status bar
+        self.status_var = tk.StringVar(value="Ready")
+        status_bar = ttk.Label(
+            left_frame, textvariable=self.status_var, relief="sunken", anchor="w"
+        )
+        status_bar.pack(fill=tk.X, pady=(10, 0))
+
+    def _setup_preview_panel(self, parent):
+        """Set up the right-side preview panel."""
+        self.preview_frame = ttk.LabelFrame(parent, text="PDF Preview", padding="5")
+        self.preview_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        self.preview_frame.pack_propagate(False)
+        self.preview_frame.configure(width=280, height=450)
+
+        # Size control
+        size_frame = ttk.Frame(self.preview_frame)
+        size_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(size_frame, text="Size:").pack(side=tk.LEFT)
+        self.size_slider = ttk.Scale(
+            size_frame,
+            from_=150,
+            to=400,
+            orient=tk.HORIZONTAL,
+            variable=self._preview_size,
+            command=self._on_preview_size_change,
+        )
+        self.size_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        self.size_label = ttk.Label(size_frame, text="250px")
+        self.size_label.pack(side=tk.LEFT)
+
+        # Preview image area
+        self.preview_label = ttk.Label(
+            self.preview_frame,
+            text="Select a PDF to preview\nor hover over results",
+            anchor="center",
+        )
+        self.preview_label.pack(fill=tk.BOTH, expand=True)
+
+        # Preview source indicator
+        self.preview_source_label = ttk.Label(
+            self.preview_frame, text="", anchor="center", font=("", 8)
+        )
+        self.preview_source_label.pack(fill=tk.X)
+
+    def _setup_pdf_section(self, parent):
+        """Set up the PDF files section with listbox."""
+        pdf_frame = ttk.LabelFrame(parent, text="PDF Files", padding="5")
+        pdf_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Drop zone
+        self.drop_zone = ttk.Label(
+            pdf_frame,
+            text="Drag & drop PDF files here, or click to browse"
+            if self.dnd_available
+            else "Click here to select PDF files",
+            anchor="center",
+            relief="sunken",
+            padding=10,
+            cursor="hand2",
+        )
+        self.drop_zone.pack(fill=tk.X, pady=(0, 5))
+        self.drop_zone.bind("<Button-1>", lambda e: self._browse_pdfs())
+
+        if self.dnd_available:
+            self.drop_zone.drop_target_register(DND_FILES)
+            self.drop_zone.dnd_bind("<<Drop>>", self._on_drop)
+
+        # Listbox for uploaded PDFs
+        list_frame = ttk.Frame(pdf_frame)
+        list_frame.pack(fill=tk.X)
+
+        self.pdf_listbox = tk.Listbox(list_frame, height=4, selectmode=tk.SINGLE)
+        self.pdf_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.pdf_listbox.bind("<<ListboxSelect>>", self._on_pdf_listbox_select)
+
+        list_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.pdf_listbox.yview)
+        list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.pdf_listbox.config(yscrollcommand=list_scrollbar.set)
+
+        # Buttons row
+        btn_frame = ttk.Frame(pdf_frame)
+        btn_frame.pack(fill=tk.X, pady=(5, 0))
+
+        ttk.Button(btn_frame, text="Browse", command=self._browse_pdfs).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Remove", command=self._remove_selected_pdf).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Clear All", command=self._clear_pdfs).pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(btn_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+
+        self.preview_btn = ttk.Button(btn_frame, text="Preview", command=self._preview_selected_pdf, state="disabled")
+        self.preview_btn.pack(side=tk.LEFT, padx=2)
+
+        self.print_btn = ttk.Button(btn_frame, text="Print", command=self._print_selected_pdf, state="disabled")
+        self.print_btn.pack(side=tk.LEFT, padx=2)
+
+        self.open_btn = ttk.Button(btn_frame, text="Open", command=self._open_selected_pdf, state="disabled")
+        self.open_btn.pack(side=tk.LEFT, padx=2)
+
+        self.pdf_count_label = ttk.Label(btn_frame, text="0 PDF(s)")
+        self.pdf_count_label.pack(side=tk.RIGHT, padx=5)
+
+    def _setup_folder_section(self, parent):
+        """Set up the folder selection section."""
+        folder_frame = ttk.LabelFrame(parent, text="Search Folder", padding="5")
+        folder_frame.pack(fill=tk.X, pady=(0, 10))
+
+        folder_btn_frame = ttk.Frame(folder_frame)
+        folder_btn_frame.pack(fill=tk.X)
+
+        ttk.Button(
+            folder_btn_frame, text="Select Folder", command=self._browse_folder
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.folder_label = ttk.Label(folder_btn_frame, text="No folder selected")
+        self.folder_label.pack(side=tk.LEFT, padx=20, fill=tk.X, expand=True)
+
+    def _setup_results_section(self, parent):
+        """Set up the results treeview section."""
+        results_frame = ttk.LabelFrame(parent, text="Results", padding="5")
         results_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Treeview with all columns
         columns = ("Part Number", "Title", "Description", "Mass", "Qty", "Matching PDF", "Print", "Status", "Model")
         self.tree = ttk.Treeview(results_frame, columns=columns, show="tree headings")
         self.tree.heading("#0", text="PDF File")
@@ -209,12 +279,11 @@ class PDFPartNumberExtractor:
         self.tree.column("Description", width=80)
         self.tree.column("Mass", width=70)
         self.tree.column("Qty", width=40)
-        self.tree.column("Matching PDF", width=200)
+        self.tree.column("Matching PDF", width=180)
         self.tree.column("Print", width=45, anchor="center")
         self.tree.column("Status", width=90)
         self.tree.column("Model", width=50, anchor="center")
 
-        # Scrollbars
         vsb = ttk.Scrollbar(results_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(results_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -226,18 +295,19 @@ class PDFPartNumberExtractor:
         results_frame.grid_rowconfigure(0, weight=1)
         results_frame.grid_columnconfigure(0, weight=1)
 
-        # Event bindings
         self.tree.bind("<Button-1>", self._on_tree_click)
         self.tree.bind("<Double-1>", self._on_tree_double_click)
         self.tree.bind("<Motion>", self._on_tree_motion)
         self.tree.bind("<Leave>", self._on_tree_leave)
 
-        # Status bar
-        self.status_var = tk.StringVar(value="Ready")
-        status_bar = ttk.Label(
-            left_frame, textvariable=self.status_var, relief="sunken", anchor="w"
-        )
-        status_bar.pack(fill=tk.X, pady=(10, 0))
+    def _on_preview_size_change(self, value):
+        """Handle preview size slider change."""
+        size = int(float(value))
+        self.size_label.config(text=f"{size}px")
+
+        # Refresh preview if one is showing
+        if self._selected_uploaded_pdf:
+            self._show_uploaded_pdf_preview(self._selected_uploaded_pdf)
 
     def _on_drop(self, event):
         """Handle file drop event."""
@@ -245,8 +315,10 @@ class PDFPartNumberExtractor:
         pdf_files = [Path(f) for f in files if f.lower().endswith(".pdf")]
 
         if pdf_files:
-            self.pdf_paths.extend(pdf_files)
-            self._update_pdf_count()
+            for pdf in pdf_files:
+                if pdf not in self.pdf_paths:
+                    self.pdf_paths.append(pdf)
+            self._update_pdf_listbox()
             self.status_var.set(f"Added {len(pdf_files)} PDF file(s)")
         else:
             self.status_var.set("No PDF files in dropped items")
@@ -258,21 +330,123 @@ class PDFPartNumberExtractor:
             filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
         )
         if files:
-            self.pdf_paths.extend(Path(f) for f in files)
-            self._update_pdf_count()
+            for f in files:
+                pdf = Path(f)
+                if pdf not in self.pdf_paths:
+                    self.pdf_paths.append(pdf)
+            self._update_pdf_listbox()
+
+    def _remove_selected_pdf(self):
+        """Remove the selected PDF from the list."""
+        selection = self.pdf_listbox.curselection()
+        if selection:
+            idx = selection[0]
+            if 0 <= idx < len(self.pdf_paths):
+                removed = self.pdf_paths.pop(idx)
+                self._update_pdf_listbox()
+                self._clear_uploaded_preview()
+                self.status_var.set(f"Removed: {removed.name}")
 
     def _clear_pdfs(self):
         """Clear all selected PDFs."""
         self.pdf_paths.clear()
-        self._update_pdf_count()
+        self._update_pdf_listbox()
+        self._clear_uploaded_preview()
         self.status_var.set("PDF list cleared")
 
-    def _update_pdf_count(self):
-        """Update the PDF count label."""
+    def _update_pdf_listbox(self):
+        """Update the PDF listbox with current files."""
+        self.pdf_listbox.delete(0, tk.END)
+        for pdf in self.pdf_paths:
+            self.pdf_listbox.insert(tk.END, pdf.name)
+
         count = len(self.pdf_paths)
-        self.pdf_count_label.config(
-            text=f"{count} PDF(s) selected" if count else "No PDFs selected"
-        )
+        self.pdf_count_label.config(text=f"{count} PDF(s)")
+
+        # Update button states
+        has_selection = bool(self.pdf_listbox.curselection())
+        state = "normal" if has_selection else "disabled"
+        self.preview_btn.config(state=state)
+        self.print_btn.config(state=state)
+        self.open_btn.config(state=state)
+
+    def _on_pdf_listbox_select(self, event):
+        """Handle PDF listbox selection change."""
+        selection = self.pdf_listbox.curselection()
+        if selection:
+            idx = selection[0]
+            if 0 <= idx < len(self.pdf_paths):
+                self._selected_uploaded_pdf = self.pdf_paths[idx]
+                self._show_uploaded_pdf_preview(self._selected_uploaded_pdf)
+
+                # Enable action buttons
+                self.preview_btn.config(state="normal")
+                self.print_btn.config(state="normal")
+                self.open_btn.config(state="normal")
+        else:
+            self._selected_uploaded_pdf = None
+            self._clear_uploaded_preview()
+            self.preview_btn.config(state="disabled")
+            self.print_btn.config(state="disabled")
+            self.open_btn.config(state="disabled")
+
+    def _show_uploaded_pdf_preview(self, pdf_path: Path):
+        """Show preview for an uploaded PDF."""
+        if not PIL_AVAILABLE:
+            self.preview_label.config(image="", text="Preview not available\n(Pillow required)")
+            self.preview_source_label.config(text="")
+            return
+
+        size = self._preview_size.get()
+        photo = self._preview_cache.get(str(pdf_path), size=(size, int(size * 1.4)))
+
+        if photo:
+            self.preview_label.config(image=photo, text="")
+            self.preview_label.image = photo
+            self.preview_source_label.config(text=f"Source: {pdf_path.name}")
+        else:
+            self.preview_label.config(image="", text="Loading preview...")
+            self.preview_source_label.config(text="")
+            # Try loading
+            self.root.after(50, lambda: self._refresh_uploaded_preview(pdf_path))
+
+    def _refresh_uploaded_preview(self, pdf_path: Path):
+        """Refresh the uploaded PDF preview after cache miss."""
+        if self._selected_uploaded_pdf != pdf_path:
+            return
+
+        size = self._preview_size.get()
+        photo = self._preview_cache.get(str(pdf_path), size=(size, int(size * 1.4)))
+
+        if photo:
+            self.preview_label.config(image=photo, text="")
+            self.preview_label.image = photo
+            self.preview_source_label.config(text=f"Source: {pdf_path.name}")
+        else:
+            self.preview_label.config(image="", text="Failed to load preview")
+            self.preview_source_label.config(text="")
+
+    def _clear_uploaded_preview(self):
+        """Clear the uploaded PDF preview."""
+        self._selected_uploaded_pdf = None
+        self.preview_label.config(image="", text="Select a PDF to preview\nor hover over results")
+        self.preview_label.image = None
+        self.preview_source_label.config(text="")
+
+    def _preview_selected_pdf(self):
+        """Show preview for the selected uploaded PDF."""
+        if self._selected_uploaded_pdf:
+            self._show_uploaded_pdf_preview(self._selected_uploaded_pdf)
+
+    def _print_selected_pdf(self):
+        """Print the selected uploaded PDF."""
+        if self._selected_uploaded_pdf:
+            self._print_file(self._selected_uploaded_pdf)
+
+    def _open_selected_pdf(self):
+        """Open the selected uploaded PDF."""
+        if self._selected_uploaded_pdf:
+            self._open_file(self._selected_uploaded_pdf)
 
     def _browse_folder(self):
         """Open folder dialog to select search folder."""
@@ -370,19 +544,16 @@ class PDFPartNumberExtractor:
 
                 part_row, match_result = data
 
-                # Part row fields
                 title = part_row.title if part_row else ""
                 description = part_row.description if part_row else ""
                 mass = part_row.mass if part_row else ""
                 qty = part_row.qty if part_row else ""
 
-                # Match result fields
                 pdf_files = match_result.pdf_files
                 model_files = match_result.model_files
                 status = match_result.status
                 no_pdf_required = match_result.no_pdf_required
 
-                # Display strings
                 if no_pdf_required:
                     pdf_display = ""
                     print_display = ""
@@ -423,7 +594,6 @@ class PDFPartNumberExtractor:
 
         data = self._item_data[item]
 
-        # Column indices: #0=tree, #1=PN, #2=Title, #3=Desc, #4=Mass, #5=Qty, #6=PDF, #7=Print, #8=Status, #9=Model
         if column == "#7":  # Print column
             if data["pdf_files"]:
                 self._print_file(data["pdf_files"][0])
@@ -451,47 +621,60 @@ class PDFPartNumberExtractor:
         self._current_preview_item = item
 
         if not item or item not in self._item_data:
-            self._clear_preview()
+            # Don't clear if we have an uploaded PDF selected
+            if not self._selected_uploaded_pdf:
+                self._clear_matched_preview()
             return
 
         data = self._item_data[item]
         if data["pdf_files"]:
-            self._show_preview(data["pdf_files"][0])
-        else:
-            self._clear_preview()
+            self._show_matched_preview(data["pdf_files"][0])
+        elif not self._selected_uploaded_pdf:
+            self._clear_matched_preview()
 
     def _on_tree_leave(self, event):
         """Handle mouse leaving tree widget."""
         self._current_preview_item = None
-        self._clear_preview()
+        # Restore uploaded PDF preview if one was selected
+        if self._selected_uploaded_pdf:
+            self._show_uploaded_pdf_preview(self._selected_uploaded_pdf)
+        else:
+            self._clear_matched_preview()
 
-    def _show_preview(self, pdf_path: Path):
-        """Show PDF preview in the preview pane."""
+    def _show_matched_preview(self, pdf_path: Path):
+        """Show preview for a matched PDF from results."""
         if not PIL_AVAILABLE:
             self.preview_label.config(image="", text="Preview not available\n(Pillow required)")
+            self.preview_source_label.config(text="")
             return
 
-        # Get from cache or generate
-        photo = self._preview_cache.get(str(pdf_path))
+        size = self._preview_size.get()
+        photo = self._preview_cache.get(str(pdf_path), size=(size, int(size * 1.4)))
+
         if photo:
             self.preview_label.config(image=photo, text="")
-            self.preview_label.image = photo  # Keep reference
+            self.preview_label.image = photo
+            self.preview_source_label.config(text=f"Match: {pdf_path.name}")
         else:
-            self.preview_label.config(image="", text="Loading preview...")
-            # Generate in background
-            self.root.after(10, lambda: self._load_preview_async(pdf_path))
+            self.preview_label.config(image="", text="Loading...")
+            self.preview_source_label.config(text="")
+            self.root.after(10, lambda: self._refresh_matched_preview(pdf_path))
 
-    def _load_preview_async(self, pdf_path: Path):
-        """Load preview asynchronously."""
-        photo = self._preview_cache.get(str(pdf_path))
+    def _refresh_matched_preview(self, pdf_path: Path):
+        """Refresh matched PDF preview."""
+        size = self._preview_size.get()
+        photo = self._preview_cache.get(str(pdf_path), size=(size, int(size * 1.4)))
+
         if photo and self._current_preview_item:
             self.preview_label.config(image=photo, text="")
             self.preview_label.image = photo
+            self.preview_source_label.config(text=f"Match: {pdf_path.name}")
 
-    def _clear_preview(self):
-        """Clear the preview pane."""
-        self.preview_label.config(image="", text="Hover over a row\nto see PDF preview")
+    def _clear_matched_preview(self):
+        """Clear matched PDF preview."""
+        self.preview_label.config(image="", text="Select a PDF to preview\nor hover over results")
         self.preview_label.image = None
+        self.preview_source_label.config(text="")
 
     def _open_file(self, path: Path):
         """Open file in system default application."""
