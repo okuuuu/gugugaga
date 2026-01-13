@@ -103,18 +103,43 @@ class PDFPartNumberExtractor:
         self._preview_size = tk.IntVar(value=250)
 
         self._setup_ui()
+        self._schedule_initial_sash_position()
+
+    def _schedule_initial_sash_position(self):
+        """Schedule sash position initialization after window is realized."""
+        self.root.after(100, self._set_initial_sash_position)
+
+    def _set_initial_sash_position(self):
+        """Set initial sash position for the preview pane."""
+        try:
+            # Get window width and set sash to leave room for preview
+            self.root.update_idletasks()
+            window_width = self.root.winfo_width()
+            # Position sash so preview pane has initial width
+            sash_pos = window_width - self._preview_initial_width - 30  # Account for padding
+            if sash_pos > 0:
+                self.paned.sashpos(0, sash_pos)
+        except Exception:
+            pass
 
     def _setup_ui(self):
         """Set up the user interface."""
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
+        # Use PanedWindow for resizable divider between controls and preview
+        self.paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.paned.pack(fill=tk.BOTH, expand=True)
+
         # Left side: controls and results
-        left_frame = ttk.Frame(main_frame)
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        left_frame = ttk.Frame(self.paned)
 
         # Right side: PDF preview panel
-        self._setup_preview_panel(main_frame)
+        self._setup_preview_panel(self.paned)
+
+        # Add panes to PanedWindow (left first, then right)
+        self.paned.add(left_frame, weight=1)
+        self.paned.add(self.preview_frame, weight=0)
 
         # PDF Files section with listbox
         self._setup_pdf_section(left_frame)
@@ -145,13 +170,14 @@ class PDFPartNumberExtractor:
         status_bar.pack(fill=tk.X, pady=(10, 0))
 
     def _setup_preview_panel(self, parent):
-        """Set up the right-side preview panel."""
+        """Set up the right-side preview panel with resizable width via PanedWindow."""
         self.preview_frame = ttk.LabelFrame(parent, text="PDF Preview", padding="5")
-        self.preview_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
-        self.preview_frame.pack_propagate(False)
-        self.preview_frame.configure(width=280, height=450)
+        # Width is now controlled by dragging the PanedWindow sash
+        # Set a reasonable initial width that will be applied after pane is added
+        self._preview_min_width = 200
+        self._preview_initial_width = 300
 
-        # Size control
+        # Size control for image rendering (independent of panel width)
         size_frame = ttk.Frame(self.preview_frame)
         size_frame.pack(fill=tk.X, pady=(0, 5))
 
@@ -159,7 +185,7 @@ class PDFPartNumberExtractor:
         self.size_slider = ttk.Scale(
             size_frame,
             from_=150,
-            to=400,
+            to=600,
             orient=tk.HORIZONTAL,
             variable=self._preview_size,
             command=self._on_preview_size_change,
